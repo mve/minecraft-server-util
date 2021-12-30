@@ -4,26 +4,23 @@ import UDPClient from './structure/UDPClient';
 import { QueryOptions } from './types/QueryOptions';
 import { resolveSRV } from './util/srvRecord';
 
-export interface FullQueryResponse {
+export interface BasicQueryResponse {
 	motd: {
 		raw: string,
 		clean: string,
 		html: string
 	},
-	version: string,
-	software: string,
-	plugins: string[],
+	gameType: string,
 	map: string,
 	players: {
 		online: number,
-		max: number,
-		list: string[]
+		max: number
 	},
-	hostIP: string,
-	hostPort: number
+	hostPort: number,
+	hostIP: string
 }
 
-export function queryFull(host: string, port = 25565, options?: QueryOptions): Promise<FullQueryResponse> {
+export function queryBasic(host: string, port = 25565, options?: QueryOptions): Promise<BasicQueryResponse> {
 	assert(typeof host === 'string', `Expected 'host' to be a 'string', got '${typeof host}'`);
 	assert(host.length > 1, `Expected 'host' to have a length greater than 0, got ${host.length}`);
 	assert(typeof port === 'number', `Expected 'port' to be a 'number', got '${typeof port}'`);
@@ -90,19 +87,18 @@ export function queryFull(host: string, port = 25565, options?: QueryOptions): P
 				if (isNaN(challengeToken)) throw new Error('Server sent an invalid challenge token');
 			}
 
-			// Full stat request packet
-			// https://wiki.vg/Query#Request_3
+			// Basic stat request packet
+			// https://wiki.vg/Query#Request_2
 			{
 				socket.writeUInt16BE(0xFEFD);
 				socket.writeByte(0x00);
 				socket.writeInt32BE(sessionID);
 				socket.writeInt32BE(challengeToken);
-				socket.writeBytes(Uint8Array.from([0x00, 0x00, 0x00, 0x00]));
 				await socket.flush(false);
 			}
 
-			// Full stat response packet
-			// https://wiki.vg/Query#Response_3
+			// Basic stat response packet
+			// https://wiki.vg/Query#Response_2
 			{
 				const packetType = await socket.readByte();
 				if (packetType !== 0x00) throw new Error('Expected server to send packet type 0x00, received ' + packetType);
@@ -110,35 +106,15 @@ export function queryFull(host: string, port = 25565, options?: QueryOptions): P
 				const serverSessionID = await socket.readInt32BE();
 				if (sessionID !== serverSessionID) throw new Error('Server session ID mismatch, expected ' + sessionID + ', received ' + serverSessionID);
 
-				await socket.readBytes(11);
+				const motdString = await socket.readStringNT();
+				const gameType = await socket.readStringNT();
+				const map = await socket.readStringNT();
+				const onlinePlayers = await socket.readStringNT();
+				const maxPlayers = await socket.readStringNT();
+				const hostPort = await socket.readInt16LE();
+				const hostIP = await socket.readStringNT();
 
-				const data: Record<string, string> = {};
-				const players: string[] = [];
-
-				// eslint-disable-next-line no-constant-condition
-				while (true) {
-					const key = await socket.readStringNT();
-
-					if (key.length < 1) break;
-
-					const value = await socket.readStringNT();
-
-					data[key] = value;
-				}
-
-				await socket.readBytes(10);
-
-				// eslint-disable-next-line no-constant-condition
-				while (true) {
-					const username = await socket.readStringNT();
-
-					if (username.length < 1) break;
-
-					players.push(username);
-				}
-
-				const motd = parse(data.hostname);
-				const plugins = data.plugins.split(/(?::|;) */g);
+				const motd = parse(motdString);
 
 				socket.close();
 
@@ -150,17 +126,14 @@ export function queryFull(host: string, port = 25565, options?: QueryOptions): P
 						clean: clean(motd),
 						html: toHTML(motd)
 					},
-					version: data.version,
-					software: plugins[0],
-					plugins: plugins.slice(1),
-					map: data.map,
+					gameType,
+					map,
 					players: {
-						online: parseInt(data.numplayers),
-						max: parseInt(data.maxplayers),
-						list: players
+						online: parseInt(onlinePlayers),
+						max: parseInt(maxPlayers)
 					},
-					hostIP: data.hostip,
-					hostPort: parseInt(data.hostport)
+					hostPort,
+					hostIP
 				});
 			}
 		} catch (e) {

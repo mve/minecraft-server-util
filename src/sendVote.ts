@@ -1,161 +1,117 @@
 import assert from 'assert';
 import crypto from 'crypto';
-import net from 'net';
-import { TextDecoder } from 'util';
-import { SendVoteOptions } from './model/Options';
+import { TextEncoder } from 'util';
+import TCPClient from './structure/TCPClient';
+import { SendVoteOptions } from './types/SendVoteOptions';
 
-const decoder = new TextDecoder('utf8');
+const encoder = new TextEncoder();
 
-interface VotifierPayload {
-	serviceName: string,
-	username: string,
-	address: string,
-	timestamp: number,
-	challenge: string,
-	uuid?: string
-}
+export function sendVote(host: string, port = 8192, options: SendVoteOptions): Promise<void> {
+	assert(typeof host === 'string', `Expected 'host' to be a 'string', got '${typeof host}'`);
+	assert(host.length > 1, `Expected 'host' to have a length greater than 0, got ${host.length}`);
+	assert(typeof port === 'number', `Expected 'port' to be a 'number', got '${typeof port}'`);
+	assert(Number.isInteger(port), `Expected 'port' to be an integer, got '${port}'`);
+	assert(port >= 0, `Expected 'port' to be greater than or equal to 0, got '${port}'`);
+	assert(port <= 65535, `Expected 'port' to be less than or equal to 65535, got '${port}'`);
+	assert(typeof options === 'object', `Expected 'options' to be an 'object', got '${typeof options}'`);
+	assert(typeof options.username === 'string', `Expected 'options.username' to be an 'string', got '${typeof options.username}'`);
+	assert(options.username.length > 1, `Expected 'options.username' to have a length greater than 0, got ${options.username.length}`);
+	assert(typeof options.token === 'string', `Expected 'options.token' to be an 'string', got '${typeof options.token}'`);
+	assert(options.token.length > 1, `Expected 'options.token' to have a length greater than 0, got ${options.token.length}`);
 
-interface VotifierMessage {
-	payload: string,
-	signature: string
-}
+	return new Promise(async (resolve, reject) => {
+		let socket: TCPClient | undefined = undefined;
 
-/**
- * Sends a Votifier v2 vote to the specified server
- * @param {SendVoteOptions} [options] The options to use when sending the vote
- * @returns {Promise<ScanLANResponse>} The response of the scan
- * @async
- */
-export default async function sendVote(options: SendVoteOptions): Promise<void> {
-	// Assert that the arguments are the correct type and format
-	assert(typeof options === 'object' || typeof options === 'undefined', `Expected 'options' to be an object or undefined, got ${typeof options}`);
-	assert(typeof options === 'object', `Expected 'options' to be an object, got ${typeof options}`);
-	assert(typeof options.host === 'string', `Expected 'options.host' to be a string, got ${typeof options.host}`);
-	assert(options.host.length > 0, 'Expected \'options.host\' to have content, got an empty string');
-	assert(typeof options.port === 'number', `Expected 'options.port' to be a number, got ${typeof options.port}`);
-	assert(options.port > 0, `Expected 'options.port' to be greater than 0, got ${options.port}`);
-	assert(options.port < 65536, `Expected 'options.port' to be less than 65536, got ${options.port}`);
-	assert(Number.isInteger(options.port), `Expected 'options.port' to be an integer, got ${options.port}`);
-	assert(typeof options.serviceName === 'string', `Expected 'options.serviceName' to be a string, got ${typeof options.serviceName}`);
-	assert(options.serviceName.length > 0, 'Expected \'options.serviceName\' to have content, got an empty string');
-	assert(typeof options.username === 'string', `Expected 'options.username' to be a string, got ${typeof options.username}`);
-	assert(options.username.length > 2, `Expected 'options.username' to have a length greater than or equal to 3, got ${options.username.length}`);
-	assert(options.username.length < 33, `Expected 'options.username' to have a length less than or equal to 32, got ${options.username.length}`);
-	assert(/^[A-Za-z0-9_]+$/.test(options.username), `Expected 'options.username' to match allowed Minecraft username characters, got '${options.username}'`);
-	assert(typeof options.timestamp === 'number' || typeof options.timestamp === 'undefined', `Expected 'options.timestamp' to be a number or undefined, got ${typeof options.timestamp}`);
+		const timeout = setTimeout(() => {
+			socket?.close();
 
-	if (typeof options.timestamp !== 'undefined') {
-		assert(options.timestamp > 0, `Expected 'options.timestamp' to be greater than or equal to 1, got ${options.timestamp}`);
-	}
+			reject(new Error('Timed out while retrieving server status'));
+		}, options?.timeout ?? 1000 * 5);
 
-	assert(typeof options.uuid === 'undefined' || options.uuid === 'string', `Expected 'options.uuid' to be either 'undefined' or a 'string', got '${typeof options.uuid}'`);
-	assert(typeof options.timeout === 'number' || typeof options.timestamp === 'undefined', `Expected 'options.timeout' to be a number or undefined, got ${typeof options.timeout}`);
+		try {
+			socket = new TCPClient();
 
-	if (typeof options.timeout !== 'undefined') {
-		assert(options.timeout > 0, `Expected 'options.timeout' to be greater than 0, got ${options.timeout}`);
-	}
+			await socket.connect({ host, port, timeout: options?.timeout ?? 1000 * 5 });
 
-	assert(typeof options.token === 'string', `Expected 'options.token' to be a string, got ${typeof options.token}`);
-	assert(options.token.length > 0, 'Expected \'options.token\' to have content, got an empty string');
+			let challengeToken;
 
-	return new Promise((resolve, reject) => {
-		const conn = net.createConnection({ host: options.host, port: options.port ?? 8192, timeout: options.timeout ?? 1000 * 15 });
-		conn.setTimeout(options.timeout ?? 1000 * 15);
+			// Handshake packet
+			// https://github.com/NuVotifier/NuVotifier/wiki/Technical-QA#handshake
+			{
+				const version = await socket.readStringUntil(0x0A);
+				const split = version.split(' ');
 
-		let state = 0;
+				if (split[1] !== '2') throw new Error('Unsupported Votifier version: ' + split[1]);
 
-		conn.on('data', (data) => {
-			switch (state) {
-				case 0: {
-					const handshakeData = decoder.decode(data);
+				challengeToken = split[2];
+			}
 
-					if (!handshakeData.startsWith('VOTIFIER')) {
-						conn.end();
+			// Send vote packet
+			// https://github.com/NuVotifier/NuVotifier/wiki/Technical-QA#protocol-v2
+			{
+				const payload: Record<string, string | number> = {
+					serviceName: options.serviceName ?? 'minecraft-server-util (https://github.com/PassTheMayo/minecraft-server-util)',
+					username: options.username,
+					address: host + ':' + port,
+					timestamp: options.timestamp ?? Date.now(),
+					challenge: challengeToken
+				};
 
-						return reject('Server sent an invalid handshake');
-					}
-
-					const split = handshakeData.split(' ');
-
-					if (parseInt(split[1]) !== 2) {
-						conn.end();
-
-						return reject('Unsupported server Votifier version');
-					}
-
-					state = 1;
-
-					const payload: VotifierPayload = {
-						serviceName: options.serviceName,
-						username: options.username,
-						address: options.host,
-						timestamp: options.timestamp ?? Date.now(),
-						challenge: split[2].substring(0, split[2].length - 1)
-					};
-
-					if (options.uuid && options.uuid.length > 0) {
-						payload.uuid = options.uuid;
-					}
-
-					const payloadSerialized = JSON.stringify(payload);
-
-					const message: VotifierMessage = {
-						payload: payloadSerialized,
-						signature: ''
-					};
-
-					message.signature = crypto.createHmac('sha256', options.token).update(payloadSerialized).digest('base64');
-
-					const messageSerialized = JSON.stringify(message);
-
-					const buffer = Buffer.alloc(messageSerialized.length + 4);
-					buffer.writeUInt16BE(0x733a, 0);
-					buffer.writeUInt16BE(messageSerialized.length, 2);
-					buffer.write(messageSerialized, 4);
-					conn.write(buffer);
-
-					break;
+				if (options.uuid) {
+					payload.uuid = options.uuid;
 				}
-				case 1: {
-					conn.end();
 
-					try {
-						const result = JSON.parse(decoder.decode(data));
+				const payloadSerialized = JSON.stringify(payload);
 
-						if (result.status === 'ok') {
-							resolve();
-						} else {
-							reject(new Error(`Server returned an error: ${result.error}`));
-						}
-					} catch (e) {
-						reject(e);
+				const message = {
+					payload: payloadSerialized,
+					signature: crypto.createHmac('sha256', options.token).update(payloadSerialized).digest('base64')
+				};
+
+				const messageSerialized = JSON.stringify(message);
+				const messageBytes = encoder.encode(messageSerialized);
+
+				socket.writeInt16BE(0x733A);
+				socket.writeInt16BE(messageBytes.byteLength);
+				socket.writeBytes(messageBytes);
+				await socket.flush(false);
+			}
+
+			// Response packet
+			// https://github.com/NuVotifier/NuVotifier/wiki/Technical-QA#protocol-v2
+			{
+				const responseString = await socket.readStringUntil(0x0A);
+
+				const response = JSON.parse(responseString);
+
+				socket.close();
+
+				clearTimeout(timeout);
+
+				switch (response.status) {
+					case 'ok': {
+						resolve();
+
+						break;
+					}
+					case 'error': {
+						reject(new Error(response.cause + ': ' + response.error));
+
+						break;
+					}
+					default: {
+						reject(new Error('Server sent an unknown response: ' + responseString));
+
+						break;
 					}
 				}
 			}
-		});
+		} catch (e) {
+			clearTimeout(timeout);
 
-		conn.on('error', (error) => {
-			conn.end();
+			socket?.close();
 
-			reject(error);
-		});
-
-		conn.on('close', () => {
-			conn.end();
-
-			reject('Socket prematurely closed');
-		});
-
-		conn.on('end', () => {
-			conn.end();
-
-			reject('Socket prematurely closed');
-		});
-
-		conn.on('timeout', () => {
-			conn.end();
-
-			reject('Connection to server timed out');
-		});
+			reject(e);
+		}
 	});
 }
