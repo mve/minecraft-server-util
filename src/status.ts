@@ -1,4 +1,5 @@
 import assert from 'assert';
+import crypto from 'crypto';
 import { clean, format, parse, toHTML } from 'minecraft-motd-util';
 import TCPClient from './structure/TCPClient';
 import { JavaStatusOptions } from './types/JavaStatusOptions';
@@ -6,6 +7,8 @@ import { JavaStatusResponse } from './types/JavaStatusResponse';
 import { resolveSRV } from './util/srvRecord';
 
 export function status(host: string, port = 25565, options?: JavaStatusOptions): Promise<JavaStatusResponse> {
+	host = host.trim();
+
 	assert(typeof host === 'string', `Expected 'host' to be a 'string', got '${typeof host}'`);
 	assert(host.length > 1, `Expected 'host' to have a length greater than 0, got ${host.length}`);
 	assert(typeof port === 'number', `Expected 'port' to be a 'number', got '${typeof port}'`);
@@ -79,6 +82,31 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 				response = JSON.parse(await socket.readStringVarInt());
 			}
 
+			const payload = crypto.randomBytes(8).readBigInt64BE();
+
+			// Ping packet
+			// https://wiki.vg/Server_List_Ping#Ping
+			{
+				socket.writeVarInt(0x01);
+				socket.writeInt64BE(payload);
+				await socket.flush();
+			}
+
+			const pingStart = Date.now();
+
+			// Pong packet
+			// https://wiki.vg/Server_List_Ping#Pong
+			{
+				const packetLength = await socket.readVarInt();
+				await socket.ensureBufferedData(packetLength);
+
+				const packetType = await socket.readVarInt();
+				if (packetType !== 0x01) throw new Error('Expected server to send packet type 0x01, received ' + packetType);
+
+				const receivedPayload = await socket.readInt64BE();
+				if (receivedPayload !== payload) throw new Error('Ping payload did not match received payload');
+			}
+
 			const motd = parse(response.description);
 
 			clearTimeout(timeout);
@@ -101,7 +129,8 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 					html: toHTML(motd)
 				},
 				favicon: response.favicon ?? null,
-				srvRecord
+				srvRecord,
+				roundTripLatency: Date.now() - pingStart
 			});
 		} catch (e) {
 			clearTimeout(timeout);

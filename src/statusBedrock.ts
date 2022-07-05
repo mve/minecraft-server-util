@@ -6,6 +6,8 @@ import { BedrockStatusResponse } from './types/BedrockStatusResponse';
 import { resolveSRV } from './util/srvRecord';
 
 export function statusBedrock(host: string, port = 19132, options?: BedrockStatusOptions): Promise<BedrockStatusResponse> {
+	host = host.trim();
+
 	assert(typeof host === 'string', `Expected 'host' to be a 'string', got '${typeof host}'`);
 	assert(host.length > 1, `Expected 'host' to have a length greater than 0, got ${host.length}`);
 	assert(typeof port === 'number', `Expected 'port' to be a 'number', got '${typeof port}'`);
@@ -50,7 +52,7 @@ export function statusBedrock(host: string, port = 19132, options?: BedrockStatu
 			{
 				socket.writeByte(0x01);
 				socket.writeInt64BE(BigInt(Date.now()));
-				socket.writeBytes(Uint8Array.from([0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78]));
+				socket.writeBytes(Uint8Array.from([0x00, 0xFF, 0xFF, 0x00, 0xFE, 0xFE, 0xFE, 0xFE, 0xFD, 0xFD, 0xFD, 0xFD, 0x12, 0x34, 0x56, 0x78]));
 				socket.writeInt64BE(BigInt(2));
 				await socket.flush(false);
 			}
@@ -72,7 +74,7 @@ export function statusBedrock(host: string, port = 19132, options?: BedrockStatu
 
 				const [edition, motdLine1, protocolVersion, version, onlinePlayers, maxPlayers, serverID, motdLine2, gameMode, gameModeID, portIPv4, portIPv6] = response.split(';');
 
-				const motd = parse(motdLine1 + '\n' + motdLine2);
+				const motd = parse(motdLine1 + (motdLine2 ? '\n' + motdLine2 : ''));
 
 				socket.close();
 
