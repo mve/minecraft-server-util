@@ -54,7 +54,7 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 			// https://wiki.vg/Server_List_Ping#Handshake
 			{
 				socket.writeVarInt(0x00);
-				socket.writeVarInt(47);
+				socket.writeVarInt(-1);
 				socket.writeStringVarInt(host);
 				socket.writeUInt16BE(port);
 				socket.writeVarInt(1);
