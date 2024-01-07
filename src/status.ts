@@ -5,6 +5,7 @@ import TCPClient from './structure/TCPClient';
 import { JavaStatusOptions } from './types/JavaStatusOptions';
 import { JavaStatusResponse } from './types/JavaStatusResponse';
 import { resolveSRV } from './util/srvRecord';
+import {jsonrepair} from "jsonrepair";
 
 export function status(host: string, port = 25565, options?: JavaStatusOptions): Promise<JavaStatusResponse> {
 	host = host.trim();
@@ -48,13 +49,15 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 				}
 			}
 
+			const protocol = options?.protocol ?? -1;
+
 			await socket.connect({ host, port, timeout: options?.timeout ?? 1000 * 5 });
 
 			// Handshake packet
 			// https://wiki.vg/Server_List_Ping#Handshake
 			{
 				socket.writeVarInt(0x00);
-				socket.writeVarInt(-1);
+				socket.writeVarInt(protocol);
 				socket.writeStringVarInt(host);
 				socket.writeUInt16BE(port);
 				socket.writeVarInt(1);
@@ -79,7 +82,15 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 				const packetType = await socket.readVarInt();
 				if (packetType !== 0x00) throw new Error('Expected server to send packet type 0x00, received ' + packetType);
 
-				response = JSON.parse(await socket.readStringVarInt());
+				const packetResponse = await socket.readStringVarInt();
+
+				try {
+					response = JSON.parse(packetResponse);
+				} catch(e) {
+					// If parsing the JSON response fails, try repairing the string first.
+					const fixedPacketResponse = jsonrepair(packetResponse);
+					response = JSON.parse(fixedPacketResponse);
+				}
 			}
 
 			const payload = crypto.randomBytes(8).readBigInt64BE();
@@ -116,7 +127,7 @@ export function status(host: string, port = 25565, options?: JavaStatusOptions):
 			resolve({
 				version: {
 					name: response.version.name,
-					protocol: response.version.protocol
+					protocol: response.version.protocol ?? protocol,
 				},
 				players: {
 					online: response.players.online,
