@@ -27,7 +27,7 @@ export function sendVote(host: string, port = 8192, options: SendVoteOptions): P
 		const timeout = setTimeout(() => {
 			socket?.close();
 
-			reject(new Error('Timed out while retrieving server status'));
+			reject(new Error('Server is offline or unreachable'));
 		}, options?.timeout ?? 1000 * 5);
 
 		try {
@@ -43,6 +43,7 @@ export function sendVote(host: string, port = 8192, options: SendVoteOptions): P
 				const version = await socket.readStringUntil(0x0A);
 				const split = version.split(' ');
 
+				if (split[0] !== 'VOTIFIER') throw new Error('Not connected to a Votifier server. Expected VOTIFIER in handshake, received: ' + version);
 				if (split[1] !== '2') throw new Error('Unsupported Votifier version: ' + split[1]);
 
 				challengeToken = split[2];
@@ -54,7 +55,7 @@ export function sendVote(host: string, port = 8192, options: SendVoteOptions): P
 				const payload: Record<string, string | number> = {
 					serviceName: options.serviceName ?? 'minecraft-server-util (https://github.com/PassTheMayo/minecraft-server-util)',
 					username: options.username,
-					address: host + ':' + port,
+					address: options.address ?? host + ':' + port,
 					timestamp: options.timestamp ?? Date.now(),
 					challenge: challengeToken
 				};

@@ -47,7 +47,7 @@ class RCON extends EventEmitter implements RCONEvents {
 			this.socket = new TCPClient();
 
 			const timeout = setTimeout(() => {
-				reject(new Error('Failed to connect to RCON server within timeout duration'));
+				reject(new Error('Server is offline or unreachable'));
 
 				this.socket?.close();
 			}, options?.timeout ?? 1000 * 5);
@@ -75,7 +75,7 @@ class RCON extends EventEmitter implements RCONEvents {
 			if (this.socket === null || !this.socket.isConnected) return reject(new Error('login() attempted before RCON has connected'));
 
 			const timeout = setTimeout(() => {
-				reject(new Error('Failed to connect to RCON server within timeout duration'));
+				reject(new Error('Server is offline or unreachable'));
 
 				this.socket?.close();
 			}, options?.timeout ?? 1000 * 5);
@@ -102,10 +102,10 @@ class RCON extends EventEmitter implements RCONEvents {
 				this.socket.ensureBufferedData(packetLength);
 
 				const requestID = await this.socket.readInt32LE();
-				if (requestID === -1) throw new Error('Invalid RCON password');
+				if (requestID === -1) reject(new Error('Invalid RCON password'));
 
 				const packetType = await this.socket.readInt32LE();
-				if (packetType !== 2) throw new Error('Expected server to send packet type 2, received ' + packetType);
+				if (packetType !== 2) reject(new Error('Expected server to send packet type 2, received ' + packetType));
 
 				await this.socket.readBytes(2);
 			}
@@ -130,7 +130,7 @@ class RCON extends EventEmitter implements RCONEvents {
 
 	async run(command: string): Promise<number> {
 		assert(typeof command === 'string', `Expected 'command' to be a 'string', got '${typeof command}'`);
-		assert(command.length > 1, `Expected 'command' to have a length greater than 0, got ${command.length}`);
+		assert(command.length > 0, `Expected 'command' to have a length greater than 0, got ${command.length}`);
 
 		if (this.socket === null || !this.socket.isConnected) throw new Error('run() attempted before RCON has connected');
 		if (!this.isLoggedIn) throw new Error('run() attempted before RCON has successfully logged in');
