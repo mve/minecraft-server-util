@@ -44,6 +44,7 @@
 	},
 	"homepage": "https://passthemayo.gitbook.io/minecraft-server-util/",
 	"dependencies": {
+		"jsonrepair": "^3.5.0",
 		"minecraft-motd-util": "^1.1.9"
 	}
 }
